@@ -1,0 +1,303 @@
+//code bastardized by Mustached_Maniac
+//https://ko-fi.com/mustached_maniac/tip
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Linq;
+using System.Text;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+public class CPHInline
+{
+	private HttpClient _httpClient;
+	private string _accessToken;
+	private string _refreshToken;
+	private string _clientId;
+	private string _clientSecret;
+	private string _currentProgressMs;
+	private string _currentTotalTracks;
+	private string _currentAlbumImage;
+	private string _currentAlbumName;
+	private string _currentReleaseYear;
+	private string _currentArtistName;
+	private string _currentDurationMs;
+	private string _currentSongLink;
+	private string _currentSongName;
+	private string _currentTrackNumber;
+	private string _currentSpotifyUri;
+	private string _previousSpotifyUri;
+	private int _spotifyVolume;
+	private bool _spotifyPlaying;
+	private readonly object _lock = new object();
+	private const int MaxRecentSongs = 10;
+	private List<SongEntry> recentSongs;
+	private int recentSongsIndex;
+	private bool _lockInitiated = false;
+	public void Init()
+	{
+		_httpClient = new HttpClient();
+		_accessToken = CPH.GetGlobalVar<string>("spotifyAccessToken", true);
+		_refreshToken = CPH.GetGlobalVar<string>("spotifyRefreshToken", true);
+		_clientId = CPH.GetGlobalVar<string>("spotifyClientId", true);
+		_clientSecret = CPH.GetGlobalVar<string>("spotifyClientSecret", true);
+		_currentProgressMs = CPH.GetGlobalVar<string>("currentProgressMs", true);
+		_currentTotalTracks = CPH.GetGlobalVar<string>("currentTotalTracks", true);
+		_currentAlbumImage = CPH.GetGlobalVar<string>("currentAlbumImage", true);
+		_currentAlbumName = CPH.GetGlobalVar<string>("currentAlbumName", true);
+		_currentReleaseYear = CPH.GetGlobalVar<string>("currentReleaseYear", true);
+		_currentArtistName = CPH.GetGlobalVar<string>("currentArtistName", true);
+		_currentDurationMs = CPH.GetGlobalVar<string>("currentDurationMs", true);
+		_currentSongLink = CPH.GetGlobalVar<string>("currentSongLink", true);
+		_currentSongName = CPH.GetGlobalVar<string>("currentSongName", true);
+		_currentTrackNumber = CPH.GetGlobalVar<string>("currentTrackNumber", true);
+		_currentSpotifyUri = CPH.GetGlobalVar<string>("currentSpotifyUri", true);
+		_previousSpotifyUri = "";
+		recentSongs = new List<SongEntry>(MaxRecentSongs);
+		recentSongsIndex = 0;
+	}
+
+	public bool Execute()
+	{
+		spotifyAutoRunner();
+		return true;
+	}
+
+	public void spotifyAutoRunner()
+	{
+		while (true)
+		{
+			CPH.Wait(1000);
+			try
+			{
+				lock (_lock)
+				{
+					_lockInitiated = true;
+					CPH.SetGlobalVar("lockStatus", _lockInitiated, false);
+					if (!Process.GetProcesses().Any(p => p.ProcessName.Equals("spotify", StringComparison.OrdinalIgnoreCase)))
+					{
+						_lockInitiated = false;
+						CPH.SetGlobalVar("lockStatus", _lockInitiated, false);
+						return;
+					}
+
+					string url = "https://api.spotify.com/v1/me/player";
+					_httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+					HttpResponseMessage response = _httpClient.GetAsync(url).Result;
+					Dictionary<string, string> storedRequests = JsonConvert.DeserializeObject<Dictionary<string, string>>(CPH.GetGlobalVar<string>("songRequests", false) ?? "{}");
+					string expirationTimeString = CPH.GetGlobalVar<string>("spotifyTokenExpires", true);
+					if (DateTime.TryParseExact(expirationTimeString, "MM/dd/yy - HH:mm", null, System.Globalization.DateTimeStyles.None, out DateTime expirationTime))
+					{
+						TimeSpan timeDifference = expirationTime - DateTime.Now;
+						if (timeDifference.TotalMinutes <= 5)
+						{
+							SpotifyTokenRefresh();
+						}
+					}
+
+					if (response.IsSuccessStatusCode)
+					{
+						string jsonString = response.Content.ReadAsStringAsync().Result;
+						JObject json = JObject.Parse(jsonString);
+						string currentTrackUri = json["item"]["uri"].ToString();
+						string currentSongName = json["item"]["name"].ToString();
+						string currentArtistName = string.Join(", ", json["item"]["artists"].Take(3).Select(artist => artist["name"].ToString()));
+						if (currentTrackUri != _currentSpotifyUri)
+						{
+							UpdateGlobals(json);
+							if (!string.IsNullOrEmpty(_currentSpotifyUri))
+							{
+								string previousSongName = _currentSongName;
+								string previousArtistName = _currentArtistName;
+								string previousRequesterName = storedRequests.ContainsKey(_previousSpotifyUri) ? storedRequests[_previousSpotifyUri].Substring(storedRequests[_previousSpotifyUri].LastIndexOf(':') + 1) : null;
+								AddToRecentSongs(previousSongName, previousArtistName, previousRequesterName);
+							}
+
+							if (CPH.GetGlobalVar<bool>("spotifySongsToChat", true))
+							{
+								if (storedRequests.ContainsKey(currentTrackUri))
+								{
+									string entry = storedRequests[currentTrackUri];
+									string requesterName = entry.Substring(entry.LastIndexOf(':') + 1);
+									if (CPH.GetGlobalVar<bool>("spotifyRequesterName", true))
+									{
+										CPH.SendMessage($"'{currentSongName}' by {currentArtistName} (Requested by: @{requesterName})");
+									}
+									else
+									{
+										CPH.SendMessage($"'{currentSongName}' by {currentArtistName}");
+									}
+
+									_currentSpotifyUri = currentTrackUri;
+									if (!string.IsNullOrEmpty(_previousSpotifyUri))
+									{
+										storedRequests.Remove(_previousSpotifyUri);
+										string serializedRequests = JsonConvert.SerializeObject(storedRequests);
+										CPH.SetGlobalVar("songRequests", serializedRequests, false);
+									}
+								}
+								else
+								{
+									CPH.SendMessage($"'{currentSongName}' by {currentArtistName}");
+									_currentSpotifyUri = currentTrackUri;
+								}
+							}
+
+							_previousSpotifyUri = _currentSpotifyUri;
+						}
+
+						UpdateProgressGlobal(json);
+					}
+					else
+					{
+						switch ((int)response.StatusCode)
+						{
+							case 400:
+							case 401:
+								CPH.LogError("SPOTIFY AUTO RUNNER ERROR: " + response.StatusCode);
+								break;
+							case 404:
+								CPH.LogError("SPOTIFY AUTO RUNNER ERROR: " + response.StatusCode);
+								break;
+							default:
+								CPH.LogError("SPOTIFY AUTO RUNNER ERROR: " + response.StatusCode);
+								break;
+						}
+					}
+
+					_lockInitiated = false;
+					CPH.SetGlobalVar("lockStatus", _lockInitiated, false);
+				}
+			}
+			catch (Exception e)
+			{
+				CPH.LogError(e.Message);
+			}
+		}
+	}
+
+	private void UpdateGlobals(JObject json)
+	{
+		_currentReleaseYear = ExtractReleaseYear(json["item"]["album"]["release_date"].ToString());
+		_currentTotalTracks = json["item"]["album"]["total_tracks"].ToString();
+		_currentAlbumImage = json["item"]["album"]["images"][0]["url"].ToString();
+		_currentAlbumName = json["item"]["album"]["name"].ToString();
+		_currentArtistName = json["item"]["artists"][0]["name"].ToString();
+		_currentDurationMs = json["item"]["duration_ms"].ToString();
+		_currentSongLink = json["item"]["external_urls"]["spotify"].ToString();
+		_currentSongName = json["item"]["name"].ToString();
+		_currentTrackNumber = json["item"]["track_number"].ToString();
+		_currentSpotifyUri = json["item"]["uri"].ToString();
+		CPH.SetGlobalVar("currentProgressMs", _currentProgressMs, true);
+		CPH.SetGlobalVar("currentAlbumTracks", _currentTotalTracks, true);
+		CPH.SetGlobalVar("currentAlbumImage", _currentAlbumImage, true);
+		CPH.SetGlobalVar("currentAlbumName", _currentAlbumName, true);
+		CPH.SetGlobalVar("currentReleaseYear", _currentReleaseYear, true);
+		CPH.SetGlobalVar("currentArtistName", _currentArtistName, true);
+		CPH.SetGlobalVar("currentDurationMs", _currentDurationMs, true);
+		CPH.SetGlobalVar("currentSongLink", _currentSongLink, true);
+		CPH.SetGlobalVar("currentSongName", _currentSongName, true);
+		CPH.SetGlobalVar("currentTrackNumber", _currentTrackNumber, true);
+		CPH.SetGlobalVar("currentSpotifyUri", _currentSpotifyUri, true);
+	}
+
+	private void UpdateProgressGlobal(JObject json)
+	{
+		_currentProgressMs = json["progress_ms"].ToString();
+		int _spotifyVolume = (int)json["device"]["volume_percent"];
+		bool _spotifyPlaying = (bool)json["is_playing"];
+		CPH.SetGlobalVar("currentProgressMs", _currentProgressMs, true);
+		CPH.SetGlobalVar("spotifyVolume", _spotifyVolume, false);
+		CPH.SetGlobalVar("spotifyPlaying", _spotifyPlaying, false);
+	}
+
+	private void AddToRecentSongs(string songName, string artistName, string requesterName)
+	{
+		if (recentSongs.Count < MaxRecentSongs)
+		{
+			recentSongs.Add(new SongEntry { SongName = songName, ArtistName = artistName, RequesterName = requesterName });
+		}
+		else
+		{
+			recentSongs.RemoveAt(0);
+			recentSongs.Add(new SongEntry { SongName = songName, ArtistName = artistName, RequesterName = requesterName });
+		}
+
+		string serializedRecentSongs = JsonConvert.SerializeObject(recentSongs);
+		CPH.SetGlobalVar("recentSongs", serializedRecentSongs, false);
+	}
+
+	private string ExtractReleaseYear(string releaseDate)
+	{
+		string[] parts = releaseDate.Split('-');
+		if (parts.Length == 1 && parts[0].Length == 4)
+		{
+			return parts[0];
+		}
+		else if (parts.Length >= 3 && parts[0].Length == 4)
+		{
+			return parts[0];
+		}
+		else
+		{
+			return "Unknown";
+		}
+	}
+
+	public bool SpotifyTokenRefresh()
+	{
+		lock (_lock)
+		{
+			string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_clientId}:{_clientSecret}"));
+			var requestData = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("grant_type", "refresh_token"), new KeyValuePair<string, string>("refresh_token", _refreshToken) });
+			HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://accounts.spotify.com/api/token");
+			request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+			request.Content = requestData;
+			HttpResponseMessage response = _httpClient.SendAsync(request).Result;
+			string responseContent = response.Content.ReadAsStringAsync().Result;
+			if (response.IsSuccessStatusCode)
+			{
+				TokenResponse responseData = JsonConvert.DeserializeObject<TokenResponse>(responseContent);
+				_accessToken = responseData.access_token;
+				int expiresIn = responseData.expires_in;
+				DateTime expirationTime = DateTime.Now.AddSeconds(expiresIn);
+				string formattedExpirationTime = expirationTime.ToString("MM/dd/yy - HH:mm");
+				CPH.SetGlobalVar("spotifyTokenExpires", formattedExpirationTime, true);
+				string newRefreshToken = responseData.refresh_token;
+				if (!string.IsNullOrEmpty(newRefreshToken))
+				{
+					CPH.SetGlobalVar("spotifyRefreshToken", newRefreshToken, true);
+				}
+
+				CPH.SetGlobalVar("spotifyAccessToken", _accessToken, true);
+				CPH.LogInfo(responseContent);
+				return true;
+			}
+			else
+			{
+				CPH.LogError($"Failed to refresh token: {responseContent}");
+				return false;
+			}
+		}
+	}
+
+	private class TokenResponse
+	{
+		public string access_token { get; set; }
+		public string token_type { get; set; }
+		public string scope { get; set; }
+		public int expires_in { get; set; }
+		public string refresh_token { get; set; }
+	}
+
+	private class SongEntry
+	{
+		public string SongName { get; set; }
+		public string ArtistName { get; set; }
+		public string RequesterName { get; set; }
+	}
+}
+//code bastardized by Mustached_Maniac
+//https://ko-fi.com/mustached_maniac/tip

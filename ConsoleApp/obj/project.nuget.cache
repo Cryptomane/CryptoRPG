@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "L7r0H4sN7GNsxpNE7L4UK4Q6gn025hLe9y92DaoFz/soP8GaVRg1HMGktWM9O4sgaTuRUOEHJ3kAih+v1UMrNQ==",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Crypto\\Downloads\\CwC\\Scripts\\ConsoleApp\\ConsoleApp\\ConsoleApp.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Crypto\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.3\\microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
+    "C:\\Users\\Crypto\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net472\\1.0.3\\microsoft.netframework.referenceassemblies.net472.1.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}
