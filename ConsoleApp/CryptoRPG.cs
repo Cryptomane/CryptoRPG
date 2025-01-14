@@ -71,6 +71,7 @@ public class CryptoRPG : CPHInlineBase
 
 	private List<LevelBonus> m_Livelli;
 	private List<Monster> m_Monsters = null;
+	private List<Equip> m_Shop = null;
 	private Dictionary<Equip.EquipType, List<Equip>> m_EquipDictionary;
 
 	#endregion Data
@@ -108,7 +109,7 @@ public class CryptoRPG : CPHInlineBase
 
 		foreach (Equip equip in shop)
 		{
-			sb.AppendLine($"{index++}) {equip.Nome} - ATT:{equip.BonusATK} DIF:{equip.BonusDIF} MAG:{equip.BonusMAG} SPR:{equip.BonusSPR}");
+			sb.AppendLine($"{index++}) {equip.Nome} - {equip.Price()}G - ATT:{equip.BonusATK} DIF:{equip.BonusDIF} MAG:{equip.BonusMAG} SPR:{equip.BonusSPR}");
 		}
 
 		CPH.SetArgument(KEY_SHOP, sb.ToString());
@@ -128,27 +129,31 @@ public class CryptoRPG : CPHInlineBase
 			return false;
 		}
 
-		List<Equip> shopList = null;
-		shopList = JsonConvert.DeserializeObject<List<Equip>>(shopStr);
+		if (m_Shop == null)
+		{
+			m_Shop = JsonConvert.DeserializeObject<List<Equip>>(shopStr);
+		}
 
-		int price = shopList[selection - 1].Price();
+		int price = m_Shop[selection - 1].Price();
 		int playerGold = CPH.GetTwitchUserVar<int>(userName, KEY_GOLD);
 
 		if (playerGold < price)
 		{
-			CPH.SendMessage($"Non hai abbastanza soldi per acquistare {shopList[selection - 1].Nome}");
+			CPH.SendMessage($"Non hai abbastanza soldi per acquistare {m_Shop[selection - 1].Nome}. Hai {playerGold} monete ma te ne servono {price}");
 			return false;
 		}
 
-		if (!TryAddItemToPlayer(userName, shopList[selection - 1]))
+		if (!TryAddItemToPlayer(userName, m_Shop[selection - 1]))
 		{
-			CPH.SendMessage($"Hai già un oggetto più potente di {shopList[selection - 1].Nome}");
+			CPH.SendMessage($"Hai già un oggetto più potente di {m_Shop[selection - 1].Nome}");
 			return false;
 		}
 
-		shopList.RemoveAt(selection - 1);
+		CPH.SendMessage($"{userName} ha acquistato {m_Shop[selection - 1].Nome} per {price} monete");
 
-		shopStr = JsonConvert.SerializeObject(shopList);
+		m_Shop.RemoveAt(selection - 1);
+
+		shopStr = JsonConvert.SerializeObject(m_Shop);
 
 		CPH.SetGlobalVar(KEY_WEEKLY_SHOP, shopStr);
 		CPH.SetTwitchUserVar(userName, KEY_GOLD, playerGold - price);
