@@ -499,33 +499,28 @@ public class CryptoRPG : CPHInlineBase
 
 		string equipStr = CPH.GetTwitchUserVar<string>(userName, "Equipment", true);
 
-		if (equipStr == null)
+		if (equipStr != null)
 		{
-			CPH.SendMessage("Inventario vuoto!");
-			return false;
-		}
+			List<Equip> equip = JsonConvert.DeserializeObject<List<Equip>>(equipStr);
 
-		List<Equip> equip = JsonConvert.DeserializeObject<List<Equip>>(equipStr);
+			if (equip == null || equip.Count == 0)
+			{
+				return false;
+			}
 
-		if (equip == null || equip.Count == 0)
-		{
-			return false;
-		}
-
-		foreach (Equip equipItem in equip)
-		{
-			m_dif += equipItem.BonusSPR;
-			m_att += equipItem.BonusMAG;
-			f_dif += equipItem.BonusDIF;
-			f_att += equipItem.BonusATK;
+			foreach (Equip equipItem in equip)
+			{
+				m_dif += equipItem.BonusSPR;
+				m_att += equipItem.BonusMAG;
+				f_dif += equipItem.BonusDIF;
+				f_att += equipItem.BonusATK;
+			}
 		}
 
 		CPH.SetArgument(KEY_MAG, m_att);
 		CPH.SetArgument(KEY_ATK, m_dif);
 		CPH.SetArgument(KEY_SPR, f_dif);
 		CPH.SetArgument(KEY_DEF, f_att);
-
-		//CPH.SendMessage($"Stat totali - MAG: {m_att} - ATT: {f_att} - SPR: {m_dif} - DIF: {f_dif}");
 
 		return true;
 	}
